@@ -1,0 +1,7 @@
+langgraph
+langchain
+langchain-google-genai
+pypdf
+faiss-cpu
+sentence-transformers
+python-dotenv
