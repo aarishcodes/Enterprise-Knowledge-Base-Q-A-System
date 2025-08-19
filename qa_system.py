@@ -1,7 +1,8 @@
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+
 from dotenv import load_dotenv
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyPDFLoader, UnstructuredFileLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from typing import TypedDict, List
@@ -27,19 +28,27 @@ def save_to_db(question, answer):
     chat_collection.insert_one({
         "question": question,
         "answer": answer,
-        "timestamp": datetime.datetime.utcnow()
+        # "timestamp": datetime.datetime.utcnow()
+        "timestamp": datetime.datetime.now(datetime.UTC)
     })
 
 def load_history(limit=5):
     history = chat_collection.find().sort("timestamp", -1).limit(limit)
     return [f"Q: {h['question']}\nA: {h['answer']}" for h in reversed(list(history))]
 
+# for all type of data formate
+# def load_document(file_path):
+#     loader = UnstructuredFileLoader(file_path)
+#     docs = loader.load()
+#     return docs
 
+# docs = load_document("instruction.docx")
+# print(len(docs))
 
 
 loader = PyPDFLoader("instruction2.pdf")
 docs = loader.load()
-# print(len(docs))
+print(len(docs))
 
 text_spliter = RecursiveCharacterTextSplitter(
     chunk_size=200,
