@@ -19,6 +19,7 @@ from pymongo import MongoClient
 
 load_dotenv()
 import asyncio
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 try:
     asyncio.get_running_loop()
