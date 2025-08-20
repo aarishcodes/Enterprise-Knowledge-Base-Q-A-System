@@ -15,7 +15,20 @@ from langgraph.graph import StateGraph, START, END
 import datetime
 from pymongo import MongoClient
 
-load_dotenv()
+import streamlit as st
+
+import asyncio
+
+# Fix for Streamlit "no current event loop" issue
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    
+    
+
+# load_dotenv()
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 model = ChatGoogleGenerativeAI(model='gemini-1.5-flash-latest')
 
 
@@ -48,7 +61,9 @@ def load_history(limit=5):
 
 loader = PyPDFLoader("instruction2.pdf")
 docs = loader.load()
-print(len(docs))
+# print(len(docs))
+
+
 
 text_spliter = RecursiveCharacterTextSplitter(
     chunk_size=200,
@@ -135,11 +150,73 @@ work_flow = graph.compile()
 # final_flow = work_flow.invoke(initial_state)
 # print(final_flow['response'])
 
-while True:
-    user_input = input("You:")
-    if user_input.lower() in ["exit", "bye"]:
-        print("Come back Soon :)")
-        break
-    else:
-        response= work_flow.invoke({'question': user_input})
-        print(response['response'])
+# while True:
+#     user_input = input("You:")
+#     if user_input.lower() in ["exit", "bye"]:
+#         print("Come back Soon :)")
+#         break
+#     else:
+#         response= work_flow.invoke({'question': user_input})
+#         print(response['response'])
+
+
+
+
+# --------------------------
+# STREAMLIT FRONTEND
+# --------------------------
+import streamlit as st
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+if __name__ == "__main__":
+    st.set_page_config(page_title="Enterprise Q&A Chatbot", layout="wide")
+    st.title("📘 Enterprise Knowledge Base Chatbot")
+
+    # Sidebar for PDF upload
+    st.sidebar.header("Upload a PDF")
+    uploaded_file = st.sidebar.file_uploader("Choose a PDF", type="pdf")
+
+    if uploaded_file is not None:
+        with open("user_uploaded.pdf", "wb") as f:
+            f.write(uploaded_file.getbuffer())
+
+        # Build retriever for the uploaded file (no backend logic changed)
+        loader = PyPDFLoader("user_uploaded.pdf")
+        docs = loader.load()
+
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=200, chunk_overlap=20)
+        chunks = text_splitter.split_documents(docs)
+
+        embedding_model = GoogleGenerativeAIEmbeddings(model='models/embedding-001')
+        vector_store = FAISS.from_documents(documents=chunks, embedding=embedding_model)
+
+        retriever = vector_store.as_retriever()
+        st.sidebar.success("✅ PDF uploaded and indexed!")
+
+        # Chat interface
+        st.subheader("💬 Ask a Question")
+        user_input = st.text_input("Type your question here...")
+
+        if st.button("Ask") and user_input:
+            response = work_flow.invoke({"question": user_input})
+
+            # Streaming effect
+            st.subheader("✨ Answer")
+            answer_placeholder = st.empty()
+            streamed_text = ""
+
+            for chunk in response['response'].split():
+                streamed_text += chunk + " "
+                answer_placeholder.markdown(f"**{streamed_text.strip()}**")
+                # small pause for smooth streaming effect
+                import time
+                time.sleep(0.03)
+
+            # Show history
+            st.subheader("📜 Recent History")
+            history = load_history(limit=5)
+            for h in history:
+                st.text(h)
