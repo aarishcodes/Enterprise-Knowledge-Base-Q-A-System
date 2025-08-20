@@ -14,77 +14,67 @@ from langgraph.graph import StateGraph, START, END
 from datetime import datetime, timezone
 from pymongo import MongoClient
 
-# --- YOUR EXISTING CODE BASE STARTS HERE ---
-# No changes have been made to your original logic.
-
+# --- LOAD ENVIRONMENT ---
 load_dotenv()
-import asyncio
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-try:
-    asyncio.get_running_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-    
+# Model
 model = ChatGoogleGenerativeAI(model='gemini-1.5-flash-latest')
 
+# MongoDB connection
 mongo_uri = os.getenv("MONGO_URI")
 client = MongoClient(mongo_uri)
 db = client["chatbot_db"]
 chat_collection = db["chat_history"]
 
+# --- DB FUNCTIONS ---
 def save_to_db(question, answer):
-    chat_collection.insert_one({
-        "question": question,
-        "answer": answer,
-        "timestamp": datetime.now(timezone.utc)
-    })
+    try:
+        chat_collection.insert_one({
+            "question": question,
+            "answer": answer,
+            "timestamp": datetime.now(timezone.utc)
+        })
+    except Exception as e:
+        print(f"DB Error: {e}")
 
 def load_history(limit=5):
-    history = chat_collection.find().sort("timestamp", -1).limit(limit)
-    return [f"Q: {h['question']}\nA: {h['answer']}" for h in reversed(list(history))]
+    try:
+        history = chat_collection.find().sort("timestamp", -1).limit(limit)
+        return [f"Q: {h['question']}\nA: {h['answer']}" for h in reversed(list(history))]
+    except Exception as e:
+        print(f"DB Error: {e}")
+        return []
 
-# --- YOUR EXISTING CODE BASE ENDS HERE ---
-
-
-# Use Streamlit's cache decorator to load and process the document
-# This prevents the app from re-processing the PDF on every user interaction
+# --- PROCESS DOCUMENT ---
 @st.cache_resource
-def process_document(file):
+def process_document(file_bytes: bytes):
     """
     Loads and processes the uploaded PDF file to create a vector store.
     """
-    # Create a temporary file to save the uploaded PDF content
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-        tmp_file.write(file.getvalue())
+        tmp_file.write(file_bytes)
         tmp_file_path = tmp_file.name
 
     try:
-        # Load the PDF from the temporary file path
         loader = PyPDFLoader(tmp_file_path)
         docs = loader.load()
 
-        # Split the document into chunks
-        text_spliter = RecursiveCharacterTextSplitter(
+        text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=200,
             chunk_overlap=20
         )
-        chunks = text_spliter.split_documents(docs)
+        chunks = text_splitter.split_documents(docs)
 
-        # Create the embedding model and vector store
         embedding_model = GoogleGenerativeAIEmbeddings(model='models/embedding-001')
         vector_store = FAISS.from_documents(documents=chunks, embedding=embedding_model)
 
         return vector_store
     finally:
-        # Clean up the temporary file
         os.remove(tmp_file_path)
 
+# --- WORKFLOW SETUP ---
 def setup_workflow(vector_store):
-    """
-    Sets up the LangGraph workflow with the provided vector store.
-    """
-    # Create a retriever from the vector store
     retriever = vector_store.as_retriever()
 
     prompt = PromptTemplate(
@@ -102,7 +92,7 @@ def setup_workflow(vector_store):
             Answer:
             """
     )
-    
+
     parser = StrOutputParser()
     chain = prompt | model | parser
 
@@ -110,10 +100,10 @@ def setup_workflow(vector_store):
         question: str
         response: str
         documents: List[Document]
-    
+
     graph = StateGraph(GraphState)
 
-    def retriever_document(state: GraphState)-> GraphState:
+    def retriever_document(state: GraphState) -> GraphState:
         question = state['question']
         documents = retriever.invoke(question)
         return {'documents': documents, 'question': question}
@@ -121,19 +111,22 @@ def setup_workflow(vector_store):
     def generate_response(state: GraphState) -> GraphState:
         question = state['question']
         documents = state['documents']
-        
+
         chat_history = load_history(limit=5)
         history_text = "\n".join(chat_history)
-        
+
         context = history_text + "\n\n" + "\n\n".join(doc.page_content for doc in documents)
-        generate_response = chain.invoke({
-            "question": question,
-            "context": context
-        })
-        
-        save_to_db(question, generate_response)
-        
-        return {'response': generate_response, 'question': question, 'documents': documents}
+        try:
+            response_text = chain.invoke({
+                "question": question,
+                "context": context
+            })
+        except Exception as e:
+            response_text = f"⚠️ Error generating response: {e}"
+
+        save_to_db(question, response_text)
+
+        return {'response': response_text, 'question': question, 'documents': documents}
 
     graph.add_node('retriever_document', retriever_document)
     graph.add_node('generate_response', generate_response)
@@ -143,48 +136,41 @@ def setup_workflow(vector_store):
 
     return graph.compile()
 
-
-# --- STREAMLIT FRONTEND STARTS HERE ---
-# Set the title and icon for the Streamlit app
-st.set_page_config(page_title="Enterprise Chatbot", page_icon="�")
+# --- STREAMLIT FRONTEND ---
+st.set_page_config(page_title="Enterprise Chatbot", page_icon="🤖")
 st.title("Enterprise Knowledge Base Chatbot")
 
-# Add a file uploader widget
 uploaded_file = st.file_uploader("Upload a PDF document to start chatting...", type="pdf")
 
 if uploaded_file:
-    # Process the document and get the vector store
-    vector_store = process_document(uploaded_file)
-    
-    # Setup the workflow with the new vector store
+    # Process the document
+    vector_store = process_document(uploaded_file.getvalue())
     work_flow = setup_workflow(vector_store)
 
-    # Initialize chat history in Streamlit's session state
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # Display chat messages from history
+    # Display history
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
     # Handle user input
     if prompt := st.chat_input("Ask a question about the document..."):
-        # Add user message to chat history and display
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
-        
-        # Get the model's response using the pre-defined workflow
+
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                response = work_flow.invoke({'question': prompt})
-                assistant_response = response['response']
+                try:
+                    response = work_flow.invoke({'question': prompt})
+                    assistant_response = response['response']
+                except Exception as e:
+                    assistant_response = f"⚠️ Workflow error: {e}"
                 st.markdown(assistant_response)
-        
-        # Add assistant response to chat history
+
         st.session_state.messages.append({"role": "assistant", "content": assistant_response})
 
 else:
-    # Prompt the user to upload a file
     st.info("Please upload a PDF document to begin.")
