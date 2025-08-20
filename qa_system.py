@@ -12,7 +12,8 @@ from langchain_core.output_parsers import StrOutputParser
 
 from langgraph.graph import StateGraph, START, END
 
-import datetime
+# import datetime
+from datetime import datetime, timezone
 from pymongo import MongoClient
 
 import streamlit as st
@@ -42,7 +43,8 @@ def save_to_db(question, answer):
         "question": question,
         "answer": answer,
         # "timestamp": datetime.datetime.utcnow()
-        "timestamp": datetime.datetime.now(datetime.UTC)
+        # "timestamp": datetime.datetime.now(datetime.UTC)
+        "timestamp": datetime.now(timezone.utc)
     })
 
 def load_history(limit=5):
