@@ -174,14 +174,11 @@ if __name__ == "__main__":
     st.set_page_config(page_title="Enterprise Q&A Chatbot", layout="wide")
     st.title("📘 Enterprise Knowledge Base Chatbot")
 
-    # Initialize session_state for chat history
-    if "history" not in st.session_state:
-        st.session_state.history = []
-
     # Sidebar for PDF upload
     st.sidebar.header("Upload a PDF")
     uploaded_file = st.sidebar.file_uploader("Choose a PDF", type="pdf")
 
+    retriever = None  # Initialize retriever
     if uploaded_file is not None:
         with open("user_uploaded.pdf", "wb") as f:
             f.write(uploaded_file.getbuffer())
@@ -202,25 +199,28 @@ if __name__ == "__main__":
     st.subheader("💬 Ask a Question")
     user_input = st.text_input("Type your question here...")
 
-    if st.button("Ask") and user_input:
-        # Example model (replace with your workflow if needed)
+    if st.button("Ask") and user_input and retriever:
         llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
         docs = retriever.get_relevant_documents(user_input)
         context = " ".join([d.page_content for d in docs[:3]])
 
         response = llm.invoke(f"Answer the question based on context:\n{context}\n\nQuestion: {user_input}")
-        
-        # Save to history
-        st.session_state.history.insert(0, (user_input, response.content))
+        answer = response.content
+
+        # ✅ Save in MongoDB
+        save_to_db(user_input, answer)
 
         # Show answer
-        st.markdown(f"**Answer:** {response.content}")
+        st.markdown(f"**Answer:** {answer}")
 
-    # Show history
-    if st.session_state.history:
-        st.subheader("📜 Recent History")
-        for q, a in st.session_state.history[:5]:  # last 5 Q&As
-            st.text(f"Q: {q}")
-            st.text(f"A: {a}")
+    # ✅ Show MongoDB history
+    st.subheader("📜 Recent History")
+    history = load_history(limit=5)
+    if history:
+        for h in history:
+            st.text(h)
             st.markdown("---")
+    else:
+        st.info("No history yet. Ask a question to start logging conversations.")
+
 
