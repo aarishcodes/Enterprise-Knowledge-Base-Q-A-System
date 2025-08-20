@@ -1,26 +1,36 @@
 import os
 import streamlit as st
 import tempfile
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from dotenv import load_dotenv
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
+import asyncio
 from typing import TypedDict, List
 from langchain_core.documents import Document
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langgraph.graph import StateGraph, START, END
 
-# --- LOAD ENVIRONMENT ---
+# Import necessary libraries for the core Q&A functionality
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langgraph.graph import StateGraph, START, END
+from dotenv import load_dotenv
+
+# Load environment variables
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# Model
+# Set up the event loop for asyncio
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+# Initialize the generative AI model
 model = ChatGoogleGenerativeAI(model='gemini-1.5-flash-latest')
 
+# --- Document Processing and Workflow Setup ---
 
-# --- PROCESS DOCUMENT ---
+# Use Streamlit's cache decorator to load and process the document
 @st.cache_resource
 def process_document(file):
     """
@@ -37,11 +47,11 @@ def process_document(file):
         docs = loader.load()
 
         # Split the document into chunks
-        text_splitter = RecursiveCharacterTextSplitter(
+        text_spliter = RecursiveCharacterTextSplitter(
             chunk_size=200,
             chunk_overlap=20
         )
-        chunks = text_splitter.split_documents(docs)
+        chunks = text_spliter.split_documents(docs)
 
         # Create the embedding model and vector store
         embedding_model = GoogleGenerativeAIEmbeddings(model='models/embedding-001')
@@ -52,12 +62,11 @@ def process_document(file):
         # Clean up the temporary file
         os.remove(tmp_file_path)
 
-
-# --- WORKFLOW SETUP ---
 def setup_workflow(vector_store):
     """
     Sets up the LangGraph workflow with the provided vector store.
     """
+    # Create a retriever from the vector store
     retriever = vector_store.as_retriever()
 
     prompt = PromptTemplate(
@@ -86,7 +95,7 @@ def setup_workflow(vector_store):
     
     graph = StateGraph(GraphState)
 
-    def retriever_document(state: GraphState)-> GraphState:
+    def retriever_document(state: GraphState) -> GraphState:
         question = state['question']
         documents = retriever.invoke(question)
         return {'documents': documents, 'question': question}
@@ -94,15 +103,19 @@ def setup_workflow(vector_store):
     def generate_response(state: GraphState) -> GraphState:
         question = state['question']
         documents = state['documents']
-
-        # Context is only based on retrieved docs (no DB history now)
+        
+        # NOTE: Removed the call to load_history()
+        # NOTE: Removed history_text and context from history
         context = "\n\n".join(doc.page_content for doc in documents)
-        response_text = chain.invoke({
+
+        generated_response = chain.invoke({
             "question": question,
             "context": context
         })
-
-        return {'response': response_text, 'question': question, 'documents': documents}
+        
+        # NOTE: Removed the call to save_to_db()
+        
+        return {'response': generated_response, 'question': question, 'documents': documents}
 
     graph.add_node('retriever_document', retriever_document)
     graph.add_node('generate_response', generate_response)
@@ -114,9 +127,11 @@ def setup_workflow(vector_store):
 
 
 # --- STREAMLIT FRONTEND ---
+
 st.set_page_config(page_title="Enterprise Chatbot", page_icon="🤖")
 st.title("Enterprise Knowledge Base Chatbot")
 
+# Add a file uploader widget
 uploaded_file = st.file_uploader("Upload a PDF document to start chatting...", type="pdf")
 
 if uploaded_file:
