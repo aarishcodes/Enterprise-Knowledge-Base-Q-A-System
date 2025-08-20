@@ -59,26 +59,24 @@ def load_history(limit=5):
 # print(len(docs))
 
 
-loader = PyPDFLoader("instruction2.pdf")
-docs = loader.load()
-# print(len(docs))
+# loader = PyPDFLoader("instruction2.pdf")
+# docs = loader.load()
+# # print(len(docs))
 
+# text_spliter = RecursiveCharacterTextSplitter(
+#     chunk_size=200,
+#     chunk_overlap=20
+# )
 
+# chunks = text_spliter.split_documents(docs)
+# # print(len(chunks))
 
-text_spliter = RecursiveCharacterTextSplitter(
-    chunk_size=200,
-    chunk_overlap=20
-)
+# embedding_model = GoogleGenerativeAIEmbeddings(model='models/embedding-001')
 
-chunks = text_spliter.split_documents(docs)
-# print(len(chunks))
+# vector_store = FAISS.from_documents(documents=chunks, embedding=embedding_model)
+# # print(vector_store)
 
-embedding_model = GoogleGenerativeAIEmbeddings(model='models/embedding-001')
-
-vector_store = FAISS.from_documents(documents=chunks, embedding=embedding_model)
-# print(vector_store)
-
-retriever = vector_store.as_retriever()
+# retriever = vector_store.as_retriever()
 
 prompt = PromptTemplate(
     input_variables=["context", "question"],
